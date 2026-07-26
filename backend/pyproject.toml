@@ -1,0 +1,24 @@
+[project]
+name = "rallytator-backend"
+version = "0.1.0"
+description = "RallyTator backend — frame delivery + annotation store (see ../CONTEXT.md, ../docs/adr/)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "av>=13.1",          # PyAV — frame-accurate seek+decode (ADR-0002)
+    "pillow>=11.0",      # JPEG encode
+    "numpy>=2.1",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",       # test client
+    "pytest>=8.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100

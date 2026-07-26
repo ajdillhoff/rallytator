@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RallyTator — frame-delivery slice</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #111; color: #ddd; }
+  header { padding: 8px 12px; border-bottom: 1px solid #333; }
+  main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 12px; }
+  #stage { background: #000; display: flex; align-items: center; justify-content: center;
+           min-height: 60vh; border: 1px solid #333; }
+  #frame { max-width: 100%; max-height: 78vh; image-rendering: auto; }
+  .controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  input[type=range] { width: 100%; }
+  aside { border: 1px solid #333; padding: 10px; height: fit-content; }
+  h2 { font-size: 12px; margin: 0 0 6px; color: #9ad; text-transform: uppercase; letter-spacing: .05em; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 2px 4px; } td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .hit { color: #7d7; } .miss { color: #e96; }
+  button { background: #222; color: #ddd; border: 1px solid #444; padding: 5px 8px;
+           cursor: pointer; border-radius: 3px; } button:hover { background: #2a2a2a; }
+  .big { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .target { color: #7d7; } .over { color: #e96; }
+  hr { border: 0; border-top: 1px solid #333; margin: 10px 0; }
+</style>
+</head>
+<body>
+<header>RallyTator · frame-delivery slice · <span id="meta">no video</span></header>
+<main>
+  <section>
+    <div id="stage"><img id="frame" alt="frame" /></div>
+    <div class="controls">
+      <button id="play">▶ play</button>
+      <input id="scrub" type="range" min="0" max="0" value="0" />
+      <span id="idx">0</span>
+    </div>
+    <div class="controls">
+      <button id="benchSeq">bench: sequential scrub</button>
+      <button id="benchRand">bench: random seek</button>
+      <button id="reset">reset stats</button>
+    </div>
+  </section>
+  <aside>
+    <h2>Last frame</h2>
+    <table>
+      <tr><td>index</td><td id="s-idx">–</td></tr>
+      <tr><td>cache</td><td id="s-cache">–</td></tr>
+      <tr><td>end-to-end</td><td><span id="s-e2e">–</span> ms</td></tr>
+      <tr><td>server decode</td><td><span id="s-dec">–</span> ms</td></tr>
+    </table>
+    <hr />
+    <h2>Prefetched (cache hit)</h2>
+    <div class="big"><span id="hit-med">–</span> <small>ms median</small></div>
+    <table>
+      <tr><td>count</td><td id="hit-n">0</td></tr>
+      <tr><td>p95</td><td><span id="hit-p95">–</span> ms</td></tr>
+      <tr><td>vs 16ms target</td><td id="hit-verdict">–</td></tr>
+    </table>
+    <hr />
+    <h2>Cache miss (cold seek)</h2>
+    <div class="big"><span id="miss-med">–</span> <small>ms median</small></div>
+    <table>
+      <tr><td>count</td><td id="miss-n">0</td></tr>
+      <tr><td>p95</td><td><span id="miss-p95">–</span> ms</td></tr>
+    </table>
+  </aside>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const hits = [], misses = [];
+const pct = (a, p) => { if (!a.length) return null;
+  const s = [...a].sort((x,y)=>x-y); return s[Math.min(s.length-1, Math.floor(p/100*s.length))]; };
+const med = a => pct(a, 50);
+const fmt = x => x == null ? "–" : x.toFixed(1);
+
+async function fetchFrame(i) {
+  const t0 = performance.now();
+  const res = await fetch(`/frame/${i}`, { cache: "no-store" });
+  const blob = await res.blob();
+  const t1 = performance.now();
+  const e2e = t1 - t0;
+  const cache = res.headers.get("X-Cache");
+  const dec = parseFloat(res.headers.get("X-Decode-Ms") || "0");
+  (cache === "hit" ? hits : misses).push(e2e);
+  return { blob, e2e, cache, dec, index: parseInt(res.headers.get("X-Frame-Index")) };
+}
+
+let curUrl = null;
+function show(blob) {
+  if (curUrl) URL.revokeObjectURL(curUrl);
+  curUrl = URL.createObjectURL(blob);
+  $("frame").src = curUrl;
+}
+
+function renderStats(r) {
+  $("s-idx").textContent = r.index;
+  $("s-cache").textContent = r.cache;
+  $("s-cache").className = r.cache;
+  $("s-e2e").textContent = fmt(r.e2e);
+  $("s-dec").textContent = fmt(r.dec);
+  $("hit-n").textContent = hits.length; $("miss-n").textContent = misses.length;
+  $("hit-med").textContent = fmt(med(hits)); $("hit-p95").textContent = fmt(pct(hits,95));
+  $("miss-med").textContent = fmt(med(misses)); $("miss-p95").textContent = fmt(pct(misses,95));
+  const hm = med(hits);
+  if (hm != null) {
+    const ok = hm < 16;
+    $("hit-verdict").innerHTML = ok ? '<span class="target">✓ &lt;16ms</span>'
+                                    : '<span class="over">✗ ≥16ms</span>';
+  }
+}
+
+async function go(i) {
+  const r = await fetchFrame(i);
+  show(r.blob); renderStats(r);
+  $("idx").textContent = i; $("scrub").value = i;
+}
+
+$("scrub").addEventListener("input", e => go(parseInt(e.target.value)));
+$("reset").addEventListener("click", () => { hits.length = 0; misses.length = 0; renderStats({index:"–",cache:"–",e2e:null,dec:null}); });
+
+let playing = false;
+$("play").addEventListener("click", async () => {
+  playing = !playing; $("play").textContent = playing ? "⏸ pause" : "▶ play";
+  const N = parseInt($("scrub").max);
+  while (playing) {
+    let i = (parseInt($("scrub").value) + 1);
+    if (i > N) i = 0;
+    await go(i);
+    await new Promise(r => setTimeout(r, 0));
+  }
+});
+
+$("benchSeq").addEventListener("click", async () => {
+  const N = Math.min(parseInt($("scrub").max), 300);
+  for (let i = 0; i <= N; i++) { const r = await fetchFrame(i); if (i % 5 === 0) show(r.blob); renderStats({...r}); }
+});
+
+$("benchRand").addEventListener("click", async () => {
+  const N = parseInt($("scrub").max);
+  for (let k = 0; k < 100; k++) {
+    const i = Math.floor(Math.random() * (N + 1));
+    const r = await fetchFrame(i); show(r.blob); renderStats(r);
+    await new Promise(r => setTimeout(r, 0));
+  }
+});
+
+(async () => {
+  try {
+    const info = await (await fetch("/video/info")).json();
+    $("meta").textContent = `${info.width}×${info.height} · ${info.fps.toFixed(2)}fps · ${info.n_frames} frames`;
+    $("scrub").max = Math.max(0, info.n_frames - 1);
+    go(0);
+  } catch { $("meta").textContent = "no video open — set RALLYTATOR_VIDEO"; }
+})();
+</script>
+</body>
+</html>
