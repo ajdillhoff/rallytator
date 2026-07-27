@@ -22,3 +22,7 @@ package = false
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["."]        # rallytator is a source tree, not an installed package
+testpaths = ["tests"]
