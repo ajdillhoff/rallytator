@@ -54,9 +54,9 @@ class VideoReader:
         self.width = self._stream.codec_context.width
         self.height = self._stream.codec_context.height
 
-        self._cache: "OrderedDict[int, bytes]" = OrderedDict()
+        self._cache: OrderedDict[int, bytes] = OrderedDict()
         self._lock = threading.Lock()
-        self._reqs: "queue.Queue[tuple[int, Future]]" = queue.Queue()
+        self._reqs: queue.Queue[tuple[int, Future]] = queue.Queue()
         self._prefetch_next = 0            # next index the prefetcher will try
         self._decoder = None               # live decode generator
         self._expected = None              # index the live decoder will yield next

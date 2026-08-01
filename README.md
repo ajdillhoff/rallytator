@@ -66,11 +66,33 @@ npm run build        # tsc typecheck + production bundle to dist/
 | key | action |
 |-----|--------|
 | `←` / `→` | step frame ±1 (`shift` = ±10) |
-| `n` | new Track of the current *new-type* |
+| `n` | new Track of the current *new-type* (pose types enter bbox-draw) |
+| `b` | draw a bounding box for the active pose Track (auto-fills a keypoint template) |
 | `1`–`4` | set new-type (player / racquet / ball / court) |
 | `Tab` | cycle the active Track |
-| click / drag | place / move a keypoint |
+| mouse wheel | zoom to cursor |
+| drag (empty) | pan the frame |
+| drag (handle) | move a keypoint / resize the bbox |
 | `v` | cycle selected point visibility (visible → occluded → out-of-frame) |
 | `Backspace` | undo last placed point |
 | `d` | delete active Track (cascades) |
-| `Esc` | deselect |
+| `Esc` | deselect / exit bbox-draw |
+
+Selecting a Track expands its sidebar card: per-component **visibility** (👁, hierarchical)
+and **lock** (🔒) toggles for the Track, bbox, mask, and each keypoint, plus model-assist
+actions (below).
+
+### Model assist (SAM3 / RFDETR)
+
+GPU inference runs in a warm worker subprocess ([ADR-0001](docs/adr/0001-server-browser-topology.md));
+install the optional group on the GPU machine and point at your weights:
+
+```bash
+cd backend && uv sync --group models
+export RALLYTATOR_SAM_CKPT=/path/to/sam_checkpoint  RALLYTATOR_SAM_CFG=/path/to/sam_cfg.yaml
+```
+
+Per selected Track, the card offers: **detect** / **seg·rf** / **pose** (RFDETR
+`RFDETRLarge` / `RFDETRSegLarge` / `RFDETRKeypointPreview`, player only) and **seg·sam3** /
+**track** (SAM3 box-prompted segment + video track over a frame span, progress over
+WebSocket). Without the `models` group the endpoints 503 cleanly.

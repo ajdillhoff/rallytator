@@ -48,3 +48,69 @@ export const upsertDetection = (
 
 export const deleteDetection = (detectionId: number) =>
   fetch(`/detections/${detectionId}`, { method: "DELETE" });
+
+export async function fetchMaskBitmap(detectionId: number): Promise<ImageBitmap> {
+  const res = await fetch(`/detections/${detectionId}/mask.png`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`mask ${detectionId}: ${res.status}`);
+  return createImageBitmap(await res.blob());
+}
+
+// ---- model assist (SAM3 / RFDETR) — see worker.py / jobs.py ---------------
+
+export type RfdetrModel = "detect" | "segment" | "keypoints";
+export type SegModel = "sam3" | "rfdetr";
+
+const post = <T>(url: string) =>
+  fetch(url, { method: "POST" }).then(json<T>);
+
+/** RFDETR detect -> writes a bbox detection on (track, frame). */
+export const runDetect = (trackId: number, frame: number) =>
+  post<Detection>(`/tracks/${trackId}/detect?frame=${frame}`);
+
+/** Segment via SAM3 (bbox prompt) or RFDETR; writes a mask (+bbox if missing). */
+export const runSegment = (trackId: number, frame: number, model: SegModel) =>
+  post<Detection>(`/tracks/${trackId}/segment?frame=${frame}&model=${model}`);
+
+/** RFDETR pose -> writes COCO-17 keypoints (detect-first if no bbox). */
+export const runKeypoints = (trackId: number, frame: number) =>
+  post<Detection>(`/tracks/${trackId}/keypoints?frame=${frame}`);
+
+export interface JobRef { job_id: string; }
+export interface JobStatus {
+  job_id: string;
+  state: "queued" | "running" | "done" | "error";
+  progress: number;   // 0..1
+  detail?: string;
+  error?: string;
+}
+
+/** SAM3 video track across [start,end]; returns a job id to poll/stream. */
+export const startTrack = (trackId: number, start: number, end: number) =>
+  fetch(`/tracks/${trackId}/track`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ start_frame: start, end_frame: end }),
+  }).then(json<JobRef>);
+
+/** Open a WebSocket for a track job's progress; falls back to GET polling on failure. */
+export function watchJob(jobId: string, onUpdate: (s: JobStatus) => void): () => void {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  let closed = false;
+  let poll: number | undefined;
+  try {
+    const ws = new WebSocket(`${proto}://${location.host}/jobs/${jobId}/progress`);
+    ws.onmessage = (e) => onUpdate(JSON.parse(e.data));
+    ws.onerror = () => { if (!closed) startPoll(); };
+    return () => { closed = true; ws.close(); if (poll) clearInterval(poll); };
+  } catch {
+    startPoll();
+    return () => { closed = true; if (poll) clearInterval(poll); };
+  }
+  function startPoll() {
+    poll = window.setInterval(async () => {
+      const s = await fetch(`/jobs/${jobId}`).then(json<JobStatus>).catch(() => null);
+      if (s) onUpdate(s);
+      if (s && (s.state === "done" || s.state === "error")) clearInterval(poll);
+    }, 500);
+  }
+}

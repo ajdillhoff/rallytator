@@ -86,6 +86,11 @@ class Store:
             return [dict(r) for r in self._conn.execute(
                 "SELECT * FROM Track WHERE video_id=? ORDER BY id", (video_id,)).fetchall()]
 
+    def get_track(self, track_id: int) -> dict | None:
+        with self._lock:
+            return _row(self._conn.execute(
+                "SELECT * FROM Track WHERE id=?", (track_id,)).fetchone())
+
     def delete_track(self, track_id: int) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM Track WHERE id=?", (track_id,))
@@ -145,8 +150,11 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT d.*, t.type AS track_type
-                FROM Detection d JOIN Track t ON d.track_id = t.id
+                SELECT d.*, t.type AS track_type,
+                       (m.detection_id IS NOT NULL) AS has_mask
+                FROM Detection d
+                JOIN Track t ON d.track_id = t.id
+                LEFT JOIN Mask m ON m.detection_id = d.id
                 WHERE t.video_id=? AND d.frame=?
                 ORDER BY d.track_id
                 """,
@@ -154,6 +162,7 @@ class Store:
         out = []
         for r in rows:
             d = _detection_out(r)
+            d["has_mask"] = bool(d["has_mask"])
             out.append(d)
         return out
 

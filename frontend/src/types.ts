@@ -1,11 +1,15 @@
 // Wire types shared with the backend store (docs/data-model.md).
 
 export type TrackType = "player" | "racquet" | "ball" | "court";
-export type Source = "yolo" | "sam3" | "cotracker" | "human";
+export type Source = "yolo" | "sam3" | "rfdetr" | "cotracker" | "human";
 export type Visibility = "visible" | "occluded" | "out-of-frame";
+
+// A bounding box in video-pixel coords: [x, y, width, height] (top-left origin).
+export type Bbox = [number, number, number, number];
 
 // geom crosses the wire as one of two shapes (docs/data-model.md §geom JSON):
 export interface PoseGeom {
+  bbox?: Bbox;                          // optional enclosing box for player/racquet/court
   kpts: [number, number, Visibility][]; // player / racquet / court
 }
 export interface PointGeom {
@@ -41,6 +45,7 @@ export interface Detection {
   model_confidence: number | null;
   model_geom: Geom | null;
   track_type?: TrackType; // present on the frame read path
+  has_mask?: boolean;     // present on the frame read path
 }
 
 // Internal editor representation: an ordered list of points, one per schema keypoint.
@@ -49,3 +54,11 @@ export interface EditPoint {
   y: number;
   vis: Visibility;
 }
+
+// The active-track working state: the (optional) box plus one point per schema keypoint.
+export interface Draft {
+  bbox: Bbox | null;
+  points: EditPoint[];
+}
+
+export const emptyDraft = (): Draft => ({ bbox: null, points: [] });

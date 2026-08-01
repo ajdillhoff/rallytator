@@ -20,3 +20,38 @@ ul { list-style: none; margin: 0; padding: 0; }
 li { padding: 3px 6px; border-left: 3px solid #444; cursor: pointer; }
 li.on { background: #1c2a1c; }
 pre { background: #181818; padding: 8px; border-radius: 4px; color: #aaa; white-space: pre-wrap; }
+
+.mode { color: #6cf; }
+
+/* ---- track cards -------------------------------------------------------- */
+.cards { display: flex; flex-direction: column; gap: 4px; }
+.card { border: 1px solid #333; border-radius: 4px; background: #161616; overflow: hidden; }
+.card.active { border-color: #2b4; }
+.card-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+             cursor: pointer; border-left: 3px solid #444; }
+.card.active .card-head { background: #1c2a1c; }
+.chip { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.grow { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-body { padding: 4px 6px 6px; border-top: 1px solid #262626; }
+.comp-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; color: #bbb; }
+
+/* toggles: compact eye/lock buttons, dimmed when off */
+.tgl { margin-left: 2px; padding: 0 4px; line-height: 1.5; opacity: 0.35;
+       filter: grayscale(1); }
+.tgl.on { opacity: 1; filter: none; background: #223; border-color: #46a; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0 4px; }
+.actions button { margin: 0; }
+.actions button:disabled { opacity: 0.4; cursor: default; }
+
+.prog { height: 5px; background: #222; border-radius: 3px; overflow: hidden; margin: 3px 0; }
+.prog > div { height: 100%; background: #2b4; transition: width 0.15s linear; }
+
+.kpt-head { margin-top: 6px; color: #9ad; cursor: pointer; user-select: none;
+            font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.kpt-list { margin-top: 3px; max-height: 220px; overflow: auto; display: flex;
+            flex-direction: column; gap: 2px; }
+.kpt-card { display: flex; align-items: center; gap: 4px; padding: 1px 4px;
+            border: 1px solid #2a2a2a; border-radius: 3px; background: #131313; cursor: pointer; }
+.kpt-card.sel { border-color: #6cf; background: #14202a; }
+.vis-badge { width: 16px; text-align: center; padding: 0; margin: 0; }

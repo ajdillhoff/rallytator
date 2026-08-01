@@ -16,6 +16,14 @@ dev = [
     "httpx>=0.27",       # test client
     "pytest>=8.3",
 ]
+# GPU model assist (SAM3 / RFDETR). Optional: the base install is CPU-only and the worker
+# imports these lazily, 503-ing cleanly if the group isn't synced. Install with
+# `uv sync --group models` on the GPU machine.
+models = [
+    "torch>=2.4",
+    "rfdetr>=1.0",
+    "sam2>=1.0",         # SAM3 preferred if present; SAM2 is the installable fallback
+]
 
 [tool.uv]
 package = false

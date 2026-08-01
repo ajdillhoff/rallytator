@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS Detection (
   frame            INTEGER NOT NULL,   -- integer Frame index; the addressing unit
   geom             TEXT NOT NULL,      -- JSON: {"kpts":[[x,y,vis],...]} or {"pt":[x,y],"vis":...}
   flight_index     INTEGER,            -- Ball only: groups Detections into Flights
-  source           TEXT NOT NULL CHECK (source IN ('yolo','sam3','cotracker','human')),
+  source           TEXT NOT NULL CHECK (source IN ('yolo','sam3','rfdetr','cotracker','human')),
   edited           INTEGER NOT NULL DEFAULT 0,
   model_confidence REAL,
   model_geom       TEXT,               -- JSON snapshot of model's ORIGINAL geom, set on human edit
