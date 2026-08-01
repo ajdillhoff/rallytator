@@ -5,15 +5,9 @@ Frame-delivery slice (see [`../docs/adr/0001-server-browser-topology.md`](../doc
 demand; a single worker thread owns the PyAV container, prefetches a forward window, and
 caches encoded JPEGs in an LRU.
 
-## Run
-
-```bash
-uv sync
-RALLYTATOR_VIDEO=/path/to/video.mp4 uv run uvicorn rallytator.main:app --port 8099
-# open http://127.0.0.1:8099  — scrubber + latency HUD, with sequential/random benchmarks
-```
-
-Or open a video at runtime: `POST /open?path=/abs/path.mp4`.
+Run instructions live in the [root README](../README.md#running). Quick reference: `uv sync`
+then `RALLYTATOR_VIDEO=... uv run uvicorn rallytator.main:app --port 8099`; open a video at
+runtime with `POST /open?path=/abs/path.mp4`.
 
 Endpoints: `GET /video/info`, `GET /frame/{index}` (JPEG + `X-Cache` / `X-Decode-Ms`
 headers), `GET /` (scrubber UI).
@@ -41,11 +35,8 @@ Upsert is keyed on `UNIQUE(track_id, frame)`: re-`PUT`ting a human edit over a m
 Detection replaces the row (pass `edited: true` + `model_geom` to snapshot the original —
 anchor logic layers on top later, per ADR-0006).
 
-## Tests
-
-```bash
-uv run pytest          # store CRUD + invariants, API smoke (no video needed)
-```
+Tests (`uv run pytest`, no video needed) cover store CRUD + invariants and the API smoke —
+see the [root README](../README.md#running).
 
 ## Measured — scrub latency vs the <16ms target (ADR-0002)
 
