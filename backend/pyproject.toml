@@ -18,11 +18,12 @@ dev = [
 ]
 # GPU model assist (SAM3 / RFDETR). Optional: the base install is CPU-only and the worker
 # imports these lazily, 503-ing cleanly if the group isn't synced. Install with
-# `uv sync --group models` on the GPU machine.
+# `uv sync --group models` on the GPU machine. SAM3 ships inside transformers (>=5.14);
+# its weights are gated (accept the license + `hf auth login`). RFDETR weights auto-download.
 models = [
     "torch>=2.4",
-    "rfdetr>=1.0",
-    "sam2>=1.0",         # SAM3 preferred if present; SAM2 is the installable fallback
+    "rfdetr>=1.9",
+    "transformers>=5.14",   # SAM3: Sam3TrackerModel / Sam3TrackerVideoModel
 ]
 
 [tool.uv]

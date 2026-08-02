@@ -84,15 +84,22 @@ actions (below).
 
 ### Model assist (SAM3 / RFDETR)
 
-GPU inference runs in a warm worker subprocess ([ADR-0001](docs/adr/0001-server-browser-topology.md));
-install the optional group on the GPU machine and point at your weights:
+GPU inference runs in a warm worker subprocess ([ADR-0001](docs/adr/0001-server-browser-topology.md)).
+Install the optional group on the GPU machine:
 
 ```bash
 cd backend && uv sync --group models
-export RALLYTATOR_SAM_CKPT=/path/to/sam_checkpoint  RALLYTATOR_SAM_CFG=/path/to/sam_cfg.yaml
 ```
 
-Per selected Track, the card offers: **detect** / **seg·rf** / **pose** (RFDETR
-`RFDETRLarge` / `RFDETRSegLarge` / `RFDETRKeypointPreview`, player only) and **seg·sam3** /
-**track** (SAM3 box-prompted segment + video track over a frame span, progress over
-WebSocket). Without the `models` group the endpoints 503 cleanly.
+- **RFDETR** (`RFDETRLarge` / `RFDETRSegLarge` / `RFDETRKeypointPreview`) — weights
+  auto-download on first use. **Verified working** (detect / segment / pose).
+- **SAM3** — ships inside `transformers` (≥5.14). We use the geometry tracker nested in
+  the composite `facebook/sam3` repo (`Sam3TrackerVideoModel` + `Sam3TrackerVideoProcessor`),
+  which does box-prompted segment + video track. Weights are **gated**: accept the license
+  at <https://huggingface.co/facebook/sam3> and authenticate (`hf auth login`, or export
+  `HF_TOKEN`). Override the repo with `RALLYTATOR_SAM_CKPT`. **Verified working** (segment +
+  track).
+
+Per selected Track, the card offers: **detect** / **seg·rf** / **pose** (RFDETR, player
+only) and **seg·sam3** / **track** (SAM3 box-prompted segment + video track over a frame
+span, progress over WebSocket). Without the `models` group the endpoints 503 cleanly.

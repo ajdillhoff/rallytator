@@ -92,25 +92,36 @@ export const startTrack = (trackId: number, start: number, end: number) =>
     body: JSON.stringify({ start_frame: start, end_frame: end }),
   }).then(json<JobRef>);
 
-/** Open a WebSocket for a track job's progress; falls back to GET polling on failure. */
+/** Open a WebSocket for a track job's progress; falls back to GET polling on failure.
+ * Always drives the job to a terminal state (done/error) so callers can clear busy UI. */
 export function watchJob(jobId: string, onUpdate: (s: JobStatus) => void): () => void {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  let closed = false;
+  let stopped = false;
   let poll: number | undefined;
-  try {
-    const ws = new WebSocket(`${proto}://${location.host}/jobs/${jobId}/progress`);
-    ws.onmessage = (e) => onUpdate(JSON.parse(e.data));
-    ws.onerror = () => { if (!closed) startPoll(); };
-    return () => { closed = true; ws.close(); if (poll) clearInterval(poll); };
-  } catch {
-    startPoll();
-    return () => { closed = true; if (poll) clearInterval(poll); };
-  }
-  function startPoll() {
+  const terminal = (s: JobStatus) => s.state === "done" || s.state === "error";
+  const stop = () => { stopped = true; if (poll) { clearInterval(poll); poll = undefined; } };
+
+  const startPoll = () => {
+    if (poll || stopped) return;
+    let fails = 0;
     poll = window.setInterval(async () => {
       const s = await fetch(`/jobs/${jobId}`).then(json<JobStatus>).catch(() => null);
-      if (s) onUpdate(s);
-      if (s && (s.state === "done" || s.state === "error")) clearInterval(poll);
+      if (s) { fails = 0; onUpdate(s); if (terminal(s)) stop(); }
+      else if (++fails >= 20) {  // ~10s of no contact — don't wedge the UI
+        onUpdate({ job_id: jobId, state: "error", progress: 0, error: "lost contact with job" });
+        stop();
+      }
     }, 500);
+  };
+
+  try {
+    const ws = new WebSocket(`${proto}://${location.host}/jobs/${jobId}/progress`);
+    ws.onmessage = (e) => { const s = JSON.parse(e.data) as JobStatus; onUpdate(s); if (terminal(s)) stop(); };
+    ws.onerror = () => startPoll();
+    ws.onclose = () => { if (!stopped) startPoll(); };  // closed before terminal -> poll
+    return () => { stop(); ws.close(); };
+  } catch {
+    startPoll();
+    return stop;
   }
 }

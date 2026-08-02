@@ -68,10 +68,12 @@ class Registry:
         from .rfdetr_models import RFDETRPose
         return self._get("rf_pose", RFDETRPose)  # type: ignore[return-value]
 
+    def _sam3(self) -> object:
+        from .sam3_model import SAM3
+        return self._get("sam3", SAM3)
+
     def sam_segmenter(self) -> Segmenter:
-        from .sam3_model import SAMSegmenter
-        return self._get("sam_seg", SAMSegmenter)  # type: ignore[return-value]
+        return self._sam3()  # type: ignore[return-value]
 
     def sam_tracker(self) -> Tracker:
-        from .sam3_model import SAMTracker
-        return self._get("sam_track", SAMTracker)  # type: ignore[return-value]
+        return self._sam3()  # type: ignore[return-value]
