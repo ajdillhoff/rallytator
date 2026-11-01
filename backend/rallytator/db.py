@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS Track (
   id        INTEGER PRIMARY KEY,
   video_id  INTEGER NOT NULL REFERENCES Video(id) ON DELETE CASCADE,
   type      TEXT NOT NULL CHECK (type IN ('player','racquet','ball','court')),
-  annotator TEXT
+  kind      TEXT NOT NULL DEFAULT 'track' CHECK (kind IN ('instance','track')),
+  label     TEXT NOT NULL,            -- editable, user-facing id; unique per Video (ADR-0007)
+  annotator TEXT,
+  UNIQUE(video_id, label)
 );
 
 CREATE TABLE IF NOT EXISTS Detection (

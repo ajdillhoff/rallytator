@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -119,8 +120,13 @@ TrackType = Literal["player", "racquet", "ball", "court"]
 Source = Literal["yolo", "sam3", "rfdetr", "cotracker", "human"]
 
 
+ObjectKind = Literal["instance", "track"]
+
+
 class TrackIn(BaseModel):
     type: TrackType
+    kind: ObjectKind = "track"
+    label: str | None = None          # omitted -> store assigns the next free label
     annotator: str | None = None
 
 
@@ -161,14 +167,58 @@ def list_tracks(video_id: int) -> list[dict]:
 def create_track(video_id: int, body: TrackIn) -> dict:
     if store().get_video(video_id) is None:
         raise HTTPException(404, f"no video {video_id}")
-    tid = store().create_track(video_id, body.type, body.annotator)
-    return {"id": tid, "video_id": video_id, "type": body.type, "annotator": body.annotator}
+    try:
+        tid = store().create_track(video_id, body.type, body.kind, body.label, body.annotator)
+    except sqlite3.IntegrityError as e:  # duplicate label (UNIQUE(video_id, label))
+        raise HTTPException(409, f"could not create track: {e}")
+    return store().get_track(tid)
 
 
 @app.delete("/tracks/{track_id}", status_code=204)
 def delete_track(track_id: int) -> Response:
     store().delete_track(track_id)
     return Response(status_code=204)
+
+
+class RenameIn(BaseModel):
+    label: str
+
+
+@app.patch("/tracks/{track_id}")
+def rename_track(track_id: int, body: RenameIn) -> dict:
+    if store().get_track(track_id) is None:
+        raise HTTPException(404, f"no track {track_id}")
+    try:
+        store().rename_track(track_id, body.label)
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(409, f"label already in use: {e}")
+    return store().get_track(track_id)
+
+
+@app.post("/tracks/{track_id}/split", status_code=201)
+def split_track(track_id: int, frame: int) -> dict:
+    """Split at `frame`: original keeps [..,frame-1], a new track gets [frame,..]."""
+    if store().get_track(track_id) is None:
+        raise HTTPException(404, f"no track {track_id}")
+    try:
+        new_id = store().split_track(track_id, frame)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return store().get_track(new_id)
+
+
+@app.post("/tracks/{src_id}/merge")
+def merge_tracks(src_id: int, into: int) -> dict:
+    """Merge `src` into `into`; destination wins on frame collisions, src is deleted."""
+    src, dst = store().get_track(src_id), store().get_track(into)
+    if src is None or dst is None:
+        raise HTTPException(404, "track not found")
+    if src_id == into:
+        raise HTTPException(400, "cannot merge a track into itself")
+    if src["video_id"] != dst["video_id"] or src["type"] != dst["type"]:
+        raise HTTPException(400, "tracks must share a video and type to merge")
+    store().merge_tracks(src_id, into)
+    return store().get_track(into)
 
 
 @app.get("/tracks/{track_id}/detections")

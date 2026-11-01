@@ -98,6 +98,80 @@ def test_bad_track_type_rejected(client, video_id):
     assert client.post(f"/videos/{video_id}/tracks", json={"type": "banana"}).status_code == 422
 
 
+def test_track_kind_and_label_defaults(client, video_id):
+    a = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()
+    b = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()
+    assert a["kind"] == "track" and a["label"] == "1"      # default kind, auto label
+    assert b["label"] == "2"                                # next free label
+
+    inst = client.post(f"/videos/{video_id}/tracks",
+                       json={"type": "player", "kind": "instance"}).json()
+    assert inst["kind"] == "instance" and inst["label"] == "3"
+
+
+def test_duplicate_label_rejected(client, video_id):
+    client.post(f"/videos/{video_id}/tracks", json={"type": "player", "label": "A"})
+    dup = client.post(f"/videos/{video_id}/tracks", json={"type": "ball", "label": "A"})
+    assert dup.status_code == 409
+
+
+def _seed(client, tid, frames):
+    for f in frames:
+        client.put(f"/tracks/{tid}/detections/{f}",
+                   json={"geom": {"kpts": []}, "source": "human"})
+
+
+def test_rename_track(client, video_id):
+    tid = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()["id"]
+    r = client.patch(f"/tracks/{tid}", json={"label": "player_left"})
+    assert r.status_code == 200 and r.json()["label"] == "player_left"
+
+
+def test_rename_collision_409(client, video_id):
+    a = client.post(f"/videos/{video_id}/tracks", json={"type": "player", "label": "A"}).json()["id"]
+    client.post(f"/videos/{video_id}/tracks", json={"type": "player", "label": "B"})
+    assert client.patch(f"/tracks/{a}", json={"label": "B"}).status_code == 409
+
+
+def test_split_track(client, video_id):
+    tid = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()["id"]
+    _seed(client, tid, [1, 2, 3, 4, 5])
+    new = client.post(f"/tracks/{tid}/split?frame=3")
+    assert new.status_code == 201
+    new_id = new.json()["id"]
+    assert [d["frame"] for d in client.get(f"/tracks/{tid}/detections").json()] == [1, 2]
+    assert [d["frame"] for d in client.get(f"/tracks/{new_id}/detections").json()] == [3, 4, 5]
+
+
+def test_split_nothing_to_split_400(client, video_id):
+    tid = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()["id"]
+    _seed(client, tid, [1, 2])
+    assert client.post(f"/tracks/{tid}/split?frame=9").status_code == 400
+
+
+def test_merge_tracks_destination_wins_on_collision(client, video_id):
+    src = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()["id"]
+    dst = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()["id"]
+    _seed(client, src, [1, 2, 3])
+    client.put(f"/tracks/{dst}/detections/2",
+               json={"geom": {"kpts": [[9, 9, "VISIBLE"]]}, "source": "human"})
+    client.put(f"/tracks/{dst}/detections/4", json={"geom": {"kpts": []}, "source": "human"})
+
+    r = client.post(f"/tracks/{src}/merge?into={dst}")
+    assert r.status_code == 200
+    dets = client.get(f"/tracks/{dst}/detections").json()
+    assert [d["frame"] for d in dets] == [1, 2, 3, 4]
+    # frame 2 kept the destination's geometry, not src's empty one
+    assert next(d for d in dets if d["frame"] == 2)["geom"]["kpts"] == [[9, 9, "VISIBLE"]]
+    assert client.get(f"/tracks/{src}/detections").json() == []  # src gone (cascade)
+
+
+def test_merge_type_mismatch_400(client, video_id):
+    a = client.post(f"/videos/{video_id}/tracks", json={"type": "player"}).json()["id"]
+    b = client.post(f"/videos/{video_id}/tracks", json={"type": "ball"}).json()["id"]
+    assert client.post(f"/tracks/{a}/merge?into={b}").status_code == 400
+
+
 def test_missing_detection_is_404(client, video_id):
     tid = client.post(f"/videos/{video_id}/tracks", json={"type": "ball"}).json()["id"]
     assert client.get(f"/tracks/{tid}/detections/999").status_code == 404

@@ -4,7 +4,9 @@ Concrete geometry for each **Track** type's **Detections**. The *why* behind the
 choices is in [ADR-0004](adr/0004-label-schemas.md); the vocabulary is in
 [`../CONTEXT.md`](../CONTEXT.md).
 
-Every keypoint carries a **Visibility** value: `visible` / `occluded` / `out-of-frame`.
+Every keypoint (and the bbox) carries a **Status** value: `VISIBLE` / `OCCLUDED` /
+`IGNORE` / `OUT_OF_FRAME` (ADR-0007). `IGNORE` = in-frame, occluded, and not confidently
+locatable → excluded from training loss.
 
 ---
 

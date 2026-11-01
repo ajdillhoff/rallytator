@@ -1,7 +1,7 @@
 // Typed client for the backend frame-delivery + annotation-store routes (main.py).
 // Origin-relative; the Vite dev proxy (vite.config.ts) forwards to FastAPI.
 
-import type { Detection, Geom, Source, Track, TrackType, VideoInfo } from "./types";
+import type { Detection, Geom, ObjectKind, Source, Track, TrackType, VideoInfo } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
@@ -21,15 +21,31 @@ export const getVideoInfo = () => fetch("/video/info").then(json<VideoInfo>);
 export const listTracks = (videoId: number) =>
   fetch(`/videos/${videoId}/tracks`).then(json<Track[]>);
 
-export const createTrack = (videoId: number, type: TrackType) =>
+export const createTrack = (videoId: number, type: TrackType, kind: ObjectKind = "track") =>
   fetch(`/videos/${videoId}/tracks`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type }),
+    body: JSON.stringify({ type, kind }),
   }).then(json<Track>);
 
 export const deleteTrack = (trackId: number) =>
   fetch(`/tracks/${trackId}`, { method: "DELETE" });
+
+/** Rename a track's label (409 if the label is already used in the video). */
+export const renameTrack = (trackId: number, label: string) =>
+  fetch(`/tracks/${trackId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ label }),
+  }).then(json<Track>);
+
+/** Split at `frame`: original keeps […,frame-1]; returns the new track with [frame,…]. */
+export const splitTrack = (trackId: number, frame: number) =>
+  fetch(`/tracks/${trackId}/split?frame=${frame}`, { method: "POST" }).then(json<Track>);
+
+/** Merge `srcId` into `dstId` (same video+type); returns the destination track. */
+export const mergeTracks = (srcId: number, dstId: number) =>
+  fetch(`/tracks/${srcId}/merge?into=${dstId}`, { method: "POST" }).then(json<Track>);
 
 export const getFrameDetections = (videoId: number, frame: number) =>
   fetch(`/videos/${videoId}/frames/${frame}/detections`).then(json<Detection[]>);

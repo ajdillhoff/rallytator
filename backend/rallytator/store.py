@@ -72,11 +72,24 @@ class Store:
 
     # ---- Track ------------------------------------------------------------
 
-    def create_track(self, video_id: int, type: str, annotator: str | None = None) -> int:
+    def _next_label(self, video_id: int) -> str:
+        """Next free integer label for a Video (labels are editable strings; we seed ints)."""
+        rows = self._conn.execute(
+            "SELECT label FROM Track WHERE video_id=?", (video_id,)).fetchall()
+        used = {int(r["label"]) for r in rows if str(r["label"]).isdigit()}
+        n = 1
+        while n in used:
+            n += 1
+        return str(n)
+
+    def create_track(self, video_id: int, type: str, kind: str = "track",
+                     label: str | None = None, annotator: str | None = None) -> int:
         with self._lock:
+            if label is None:
+                label = self._next_label(video_id)
             cur = self._conn.execute(
-                "INSERT INTO Track(video_id, type, annotator) VALUES (?,?,?)",
-                (video_id, type, annotator),
+                "INSERT INTO Track(video_id, type, kind, label, annotator) VALUES (?,?,?,?,?)",
+                (video_id, type, kind, label, annotator),
             )
             self._conn.commit()
             return int(cur.lastrowid)
@@ -94,6 +107,54 @@ class Store:
     def delete_track(self, track_id: int) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM Track WHERE id=?", (track_id,))
+            self._conn.commit()
+
+    def rename_track(self, track_id: int, label: str) -> None:
+        """Set a Track's label (raises sqlite3.IntegrityError on a per-Video collision)."""
+        with self._lock:
+            self._conn.execute("UPDATE Track SET label=? WHERE id=?", (label, track_id))
+            self._conn.commit()
+
+    def split_track(self, track_id: int, frame: int) -> int:
+        """Move Detections at frame >= `frame` to a new Track (same video/type/kind).
+
+        The original keeps [..., frame-1]; the new Track gets [frame, ...]. Returns the new
+        Track id. Raises ValueError if there is nothing at/after `frame` to split off.
+        """
+        with self._lock:
+            tr = self._conn.execute("SELECT * FROM Track WHERE id=?", (track_id,)).fetchone()
+            if tr is None:
+                raise ValueError(f"no track {track_id}")
+            n = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM Detection WHERE track_id=? AND frame>=?",
+                (track_id, frame)).fetchone()["c"]
+            if n == 0:
+                raise ValueError(f"no detections at/after frame {frame} to split")
+            new_id = self._conn.execute(
+                "INSERT INTO Track(video_id, type, kind, label, annotator) VALUES (?,?,?,?,?)",
+                (tr["video_id"], tr["type"], tr["kind"],
+                 self._next_label(tr["video_id"]), tr["annotator"]),
+            ).lastrowid
+            self._conn.execute(
+                "UPDATE Detection SET track_id=? WHERE track_id=? AND frame>=?",
+                (new_id, track_id, frame))
+            self._conn.commit()
+            return int(new_id)
+
+    def merge_tracks(self, src_id: int, dst_id: int) -> None:
+        """Re-parent `src`'s Detections onto `dst`, then delete `src`.
+
+        On a (dst, frame) collision the destination's Detection wins (src's is dropped).
+        Caller validates that both exist, differ, and share a Video/type.
+        """
+        with self._lock:
+            self._conn.execute(
+                """DELETE FROM Detection WHERE track_id=? AND frame IN
+                   (SELECT frame FROM Detection WHERE track_id=?)""",
+                (src_id, dst_id))
+            self._conn.execute(
+                "UPDATE Detection SET track_id=? WHERE track_id=?", (dst_id, src_id))
+            self._conn.execute("DELETE FROM Track WHERE id=?", (src_id,))
             self._conn.commit()
 
     # ---- Detection --------------------------------------------------------

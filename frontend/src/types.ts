@@ -2,19 +2,24 @@
 
 export type TrackType = "player" | "racquet" | "ball" | "court";
 export type Source = "yolo" | "sam3" | "rfdetr" | "cotracker" | "human";
-export type Visibility = "visible" | "occluded" | "out-of-frame";
+export type ObjectKind = "instance" | "track";
+
+// Status (ADR-0007): observability + trainability of geometry on a Frame. Canonical
+// uppercase tokens — a downstream dataset contract. Replaces the old 3-value Visibility.
+export type Status = "VISIBLE" | "OCCLUDED" | "IGNORE" | "OUT_OF_FRAME";
 
 // A bounding box in video-pixel coords: [x, y, width, height] (top-left origin).
 export type Bbox = [number, number, number, number];
 
 // geom crosses the wire as one of two shapes (docs/data-model.md §geom JSON):
 export interface PoseGeom {
-  bbox?: Bbox;                          // optional enclosing box for player/racquet/court
-  kpts: [number, number, Visibility][]; // player / racquet / court
+  bbox?: Bbox;                      // optional enclosing box for player/racquet/court
+  bbox_status?: Status;             // object-level status for the box (default VISIBLE)
+  kpts: [number, number, Status][]; // player / racquet / court
 }
 export interface PointGeom {
   pt: [number, number]; // ball
-  vis: Visibility;
+  status: Status;
 }
 export type Geom = PoseGeom | PointGeom;
 
@@ -31,6 +36,8 @@ export interface Track {
   id: number;
   video_id: number;
   type: TrackType;
+  kind: ObjectKind;     // instance (single frame) | track (persistent identity)
+  label: string;        // editable, unique-per-video user-facing id (ADR-0007)
   annotator: string | null;
 }
 
@@ -52,13 +59,15 @@ export interface Detection {
 export interface EditPoint {
   x: number;
   y: number;
-  vis: Visibility;
+  status: Status;
 }
 
-// The active-track working state: the (optional) box plus one point per schema keypoint.
+// The active-track working state: the (optional) box + its status, plus one point per
+// schema keypoint.
 export interface Draft {
   bbox: Bbox | null;
+  bboxStatus: Status;
   points: EditPoint[];
 }
 
-export const emptyDraft = (): Draft => ({ bbox: null, points: [] });
+export const emptyDraft = (): Draft => ({ bbox: null, bboxStatus: "VISIBLE", points: [] });

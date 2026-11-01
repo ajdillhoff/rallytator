@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  createTrack, deleteTrack, fetchFrameBitmap, fetchMaskBitmap, getVideoInfo,
+  createTrack, deleteTrack, fetchMaskBitmap, getVideoInfo,
   getFrameDetections, listTracks, upsertDetection,
+  renameTrack, splitTrack, mergeTracks,
   runDetect, runSegment, runKeypoints, startTrack, watchJob, type JobStatus,
 } from "./api";
+import { FrameCache } from "./frameCache";
 import { draftToGeom, geomToDraft } from "./geom";
 import { PixiStage, type MaskItem, type RenderItem } from "./pixiStage";
 import { LABEL_SCHEMAS, TRACK_TYPES } from "./schemas";
 import { applyTemplate } from "./templates";
 import type {
-  Bbox, Detection, Draft, Track, TrackType, VideoInfo, Visibility,
+  Bbox, Detection, Draft, ObjectKind, Status, Track, TrackType, VideoInfo,
 } from "./types";
 import { emptyDraft } from "./types";
 
-const VIS_CYCLE: Visibility[] = ["visible", "occluded", "out-of-frame"];
-const nextVis = (v: Visibility): Visibility =>
-  VIS_CYCLE[(VIS_CYCLE.indexOf(v) + 1) % VIS_CYCLE.length]!;
-const VIS_CHAR: Record<Visibility, string> = { visible: "v", occluded: "o", "out-of-frame": "x" };
+// `v` cycles only these three (ADR-0007); OUT_OF_FRAME is set deliberately from the UI.
+const STATUS_CYCLE: Status[] = ["VISIBLE", "OCCLUDED", "IGNORE"];
+const nextStatus = (s: Status): Status =>
+  STATUS_CYCLE[(STATUS_CYCLE.indexOf(s) + 1) % STATUS_CYCLE.length]!;
+const STATUSES: Status[] = ["VISIBLE", "OCCLUDED", "IGNORE", "OUT_OF_FRAME"];
+const STATUS_CHAR: Record<Status, string> = { VISIBLE: "V", OCCLUDED: "O", IGNORE: "I", OUT_OF_FRAME: "X" };
 const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`;
 
 // Component-id keys for the ephemeral visibility/lock sets.
@@ -59,25 +63,29 @@ export default function App() {
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [selected, setSelected] = useState<number | null>(null);
   const [newType, setNewType] = useState<TrackType>("player");
+  const [newKind, setNewKind] = useState<ObjectKind>("track");
   const [mode, setMode] = useState<Mode>("idle");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [locked, setLocked] = useState<Set<string>>(new Set());
   const [kptsOpen, setKptsOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [job, setJob] = useState<JobStatus | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   // Latest state for the stable imperative Pixi pointer callbacks.
-  const s = useRef({ activeId, draft, frame, tracks, newType, mode, locked });
-  s.current = { activeId, draft, frame, tracks, newType, mode, locked };
+  const s = useRef({ activeId, draft, frame, tracks, newType, newKind, mode, locked });
+  s.current = { activeId, draft, frame, tracks, newType, newKind, mode, locked };
   const dragging = useRef<Drag | null>(null);
   const dirty = useRef(false);
   const maskCache = useRef(new Map<number, ImageBitmap>());
+  const frames = useRef(new FrameCache());
 
   const videoId = info?.video_id ?? null;
   const activeTrack = tracks.find((t) => t.id === activeId) ?? null;
   const activeType = activeTrack?.type ?? newType;
-  const schema = LABEL_SCHEMAS[activeType];
 
   const save = useCallback(async (d: Draft) => {
     const { activeId: id, frame: f, tracks: ts } = s.current;
@@ -140,7 +148,7 @@ export default function App() {
         if (trackLocked(cur.locked, id)) return;
         dragging.current = { kind: "point", index: 0 };
         dirty.current = true;
-        setDraft({ bbox: null, points: [{ x: info.x, y: info.y, vis: "visible" }] });
+        setDraft({ bbox: null, bboxStatus: "VISIBLE", points: [{ x: info.x, y: info.y, status: "VISIBLE" }] });
         setSelected(0);
         return;
       }
@@ -182,7 +190,7 @@ export default function App() {
         const type = id != null ? cur.tracks.find((t) => t.id === id)?.type : undefined;
         setMode("idle");
         if (box && box[2] > 3 && box[3] > 3 && id != null && type) {
-          const nd: Draft = { bbox: box, points: applyTemplate(type, box) };
+          const nd: Draft = { bbox: box, bboxStatus: "VISIBLE", points: applyTemplate(type, box) };
           setDraft(nd);
           void save(nd);
         }
@@ -214,9 +222,11 @@ export default function App() {
   useEffect(() => {
     if (!ready || videoId == null) return;
     let alive = true;
-    fetchFrameBitmap(frame)
+    const max = (info?.n_frames ?? 1) - 1;
+    frames.current.get(frame)
       .then((bmp) => alive && stageRef.current?.setFrame(bmp))
       .catch((e) => setErr(String(e)));
+    frames.current.prefetch(frame, 48, 16, max); // forward-biased, both directions
     getFrameDetections(videoId, frame)
       .then((dets) => {
         if (!alive) return;
@@ -227,7 +237,7 @@ export default function App() {
       })
       .catch((e) => setErr(String(e)));
     return () => { alive = false; };
-  }, [frame, videoId, ready]);
+  }, [frame, videoId, ready, info]);
 
   // ---- re-derive draft when the active track changes ----------------------
   useEffect(() => {
@@ -253,6 +263,7 @@ export default function App() {
         dr = det ? geomToDraft(det.geom) : null;
       }
       if (!dr) continue;
+      if (dr.bboxStatus === "OUT_OF_FRAME") continue; // object absent on this frame — hidden
       items.push({
         points: dr.points,
         pointVisible: dr.points.map((_, i) => !kptHidden(hidden, t.id, i)),
@@ -260,6 +271,7 @@ export default function App() {
         color: sch.color,
         active: isActive,
         bbox: dr.bbox && !bboxHidden(hidden, t.id) ? dr.bbox : null,
+        bboxStatus: dr.bboxStatus,
       });
     }
     stage.render(items, selected);
@@ -287,13 +299,46 @@ export default function App() {
   }, [detections, hidden, ready]);
 
   const step = useCallback((delta: number) => {
+    setPlaying(false); // manual navigation pauses playback
     setFrame((f) => Math.max(0, Math.min((info?.n_frames ?? 1) - 1, f + delta)));
   }, [info]);
+
+  const togglePlay = useCallback(() => {
+    if (videoId != null) setPlaying((p) => !p);
+  }, [videoId]);
+
+  // ---- playback: real-time clock, stall-and-rebuffer on underrun (no frame-drop) ------
+  useEffect(() => {
+    if (!playing) return;
+    const max = (info?.n_frames ?? 1) - 1;
+    const interval = 1000 / (info?.fps || 30);
+    if (s.current.frame >= max) { setPlaying(false); return; }
+    let cancelled = false;
+    let cur = s.current.frame;
+    (async () => {
+      while (!cancelled && cur < max) {
+        const t0 = performance.now();
+        const next = cur + 1;
+        if (!frames.current.hasBlob(next)) {       // underrun -> stall (buffering), no skip
+          setBuffering(true);
+          try { await frames.current.get(next); } catch { break; }
+          if (cancelled) break;
+          setBuffering(false);
+        }
+        cur = next;
+        setFrame(next);
+        frames.current.prefetch(next, 64, 8, max);
+        await new Promise((r) => setTimeout(r, Math.max(0, interval - (performance.now() - t0))));
+      }
+      if (!cancelled) setPlaying(false);
+    })();
+    return () => { cancelled = true; setBuffering(false); };
+  }, [playing, info]);
 
   const addTrack = useCallback(async () => {
     if (videoId == null) return;
     const type = s.current.newType;
-    const t = await createTrack(videoId, type);
+    const t = await createTrack(videoId, type, s.current.newKind);
     setTracks((prev) => [...prev, t]);
     setActiveId(t.id);
     setDraft(emptyDraft());
@@ -316,7 +361,27 @@ export default function App() {
     const id = s.current.activeId;
     if (id == null || kptLocked(s.current.locked, id, i)) return;
     setDraft((prev) => {
-      const next = { ...prev, points: prev.points.map((p, j) => (j === i ? { ...p, vis: nextVis(p.vis) } : p)) };
+      const next = { ...prev, points: prev.points.map((p, j) => (j === i ? { ...p, status: nextStatus(p.status) } : p)) };
+      void save(next);
+      return next;
+    });
+  }, [save]);
+
+  const setPointStatus = useCallback((i: number, status: Status) => {
+    const id = s.current.activeId;
+    if (id == null || kptLocked(s.current.locked, id, i)) return;
+    setDraft((prev) => {
+      const next = { ...prev, points: prev.points.map((p, j) => (j === i ? { ...p, status } : p)) };
+      void save(next);
+      return next;
+    });
+  }, [save]);
+
+  const setBboxStatus = useCallback((status: Status) => {
+    const id = s.current.activeId;
+    if (id == null || bboxLocked(s.current.locked, id)) return;
+    setDraft((prev) => {
+      const next = { ...prev, bboxStatus: status };
       void save(next);
       return next;
     });
@@ -340,6 +405,44 @@ export default function App() {
     const mine = dets.find((d) => d.track_id === s.current.activeId);
     if (mine) setDraft(geomToDraft(mine.geom));
   }, [videoId]);
+
+  // ---- identity ops (rename / split / merge) ------------------------------
+  const afterIdentityOp = useCallback(async (nextActiveId: number) => {
+    if (videoId == null) return;
+    const [ts, dets] = await Promise.all([
+      listTracks(videoId), getFrameDetections(videoId, s.current.frame)]);
+    setTracks(ts);
+    setDetections(dets);
+    setActiveId(nextActiveId);
+  }, [videoId]);
+
+  const doRename = useCallback(async (label: string) => {
+    const id = s.current.activeId;
+    if (id == null || !label.trim()) return;
+    try {
+      const t = await renameTrack(id, label.trim());
+      setTracks((prev) => prev.map((x) => (x.id === id ? t : x)));
+    } catch (e) { setErr(String(e)); }
+  }, []);
+
+  const doSplit = useCallback(async () => {
+    const id = s.current.activeId;
+    if (id == null) return;
+    try {
+      const nt = await splitTrack(id, s.current.frame);
+      await afterIdentityOp(nt.id);
+    } catch (e) { setErr(String(e)); }
+  }, [afterIdentityOp]);
+
+  const doMerge = useCallback(async (dstId: number) => {
+    const id = s.current.activeId;
+    if (id == null) return;
+    try {
+      const dst = await mergeTracks(id, dstId);
+      setMergeTarget(null);
+      await afterIdentityOp(dst.id);
+    } catch (e) { setErr(String(e)); }
+  }, [afterIdentityOp]);
 
   const runOp = useCallback(async (label: string, op: () => Promise<unknown>) => {
     if (s.current.activeId == null) return;
@@ -384,10 +487,15 @@ export default function App() {
   // ---- keybinds ------------------------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack typing in form fields (label rename, merge select).
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA"
+                 || el.tagName === "SELECT" || el.isContentEditable)) return;
       const big = e.shiftKey ? 10 : 1;
       switch (e.key) {
         case "ArrowRight": case "l": e.preventDefault(); step(big); break;
         case "ArrowLeft": case "h": e.preventDefault(); step(-big); break;
+        case " ": e.preventDefault(); togglePlay(); break;
         case "n": e.preventDefault(); void addTrack(); break;
         case "d": e.preventDefault(); void removeActive(); break;
         case "b": {
@@ -424,7 +532,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [step, addTrack, removeActive, save, selected, cyclePointVis, activeId, activeType, locked]);
+  }, [step, addTrack, removeActive, save, selected, cyclePointVis, activeId, activeType, locked, togglePlay]);
 
   const hasDet = (id: number) => detections.some((d) => d.track_id === id);
 
@@ -437,6 +545,19 @@ export default function App() {
     <button className={`tgl ${locked.has(key) ? "on" : ""}`} title="lock"
             onClick={(e) => { e.stopPropagation(); toggleLocked(key); }}>🔒</button>
   );
+  // 4-way status picker (V/O/I/X). `v` keybind covers the first three; X must be clicked.
+  const statusPicker = (current: Status, onSet: (s: Status) => void, disabled = false) => (
+    <span className="status-pick">
+      {STATUSES.map((st) => (
+        <button key={st} disabled={disabled} title={st}
+                className={`st st-${st} ${current === st ? "on" : ""}`}
+                onClick={(e) => { e.stopPropagation(); onSet(st); }}>{STATUS_CHAR[st]}</button>
+      ))}
+    </span>
+  );
+
+  const sel = activeTrack;
+  const selSch = sel ? LABEL_SCHEMAS[sel.type] : null;
 
   return (
     <div className="app">
@@ -445,107 +566,135 @@ export default function App() {
         {mode === "draw-bbox" && <span className="mode"> · draw bbox</span>}
         {err && <span className="err"> · {err}</span>}
       </header>
-      <div ref={hostRef} className="stage" />
-      <aside>
-        <div className="row"><b>frame</b><span>{frame} / {(info?.n_frames ?? 1) - 1}</span></div>
-        <input type="range" min={0} max={Math.max(0, (info?.n_frames ?? 1) - 1)}
-               value={frame} onChange={(e) => setFrame(Number(e.target.value))} />
-        <div className="row"><b>new type</b>
-          <span>{TRACK_TYPES.map((t, i) => (
-            <button key={t} className={t === newType ? "on" : ""} onClick={() => setNewType(t)}>
-              {i + 1}:{t}
-            </button>
+
+      <div className="main">
+        <div className="toolbar">
+          <button onClick={() => void addTrack()} title="new object (n)">+ new</button>
+          <span className="seg">{TRACK_TYPES.map((t, i) => (
+            <button key={t} className={t === newType ? "on" : ""} onClick={() => setNewType(t)}>{i + 1}:{t}</button>
           ))}</span>
-        </div>
-        <div className="row"><b>active</b>
-          <span>{activeTrack ? `#${activeTrack.id} ${activeTrack.type} — ${draft.points.length}/${schema.points.length} pts` : "none"}</span>
+          <span className="seg">
+            <button className={newKind === "track" ? "on" : ""} onClick={() => setNewKind("track")}>track</button>
+            <button className={newKind === "instance" ? "on" : ""} onClick={() => setNewKind("instance")}>instance</button>
+          </span>
+          {sel && selSch && <span className="hint">{sel.label}: {draft.points.length}/{selSch.points.length} pts</span>}
         </div>
 
-        <h2>tracks</h2>
-        <div className="cards">
-          {tracks.map((t) => {
-            const isActive = t.id === activeId;
-            const sch = LABEL_SCHEMAS[t.type];
-            return (
-              <div key={t.id} className={`card ${isActive ? "active" : ""}`}>
-                <div className="card-head" onClick={() => setActiveId(t.id)}
-                     style={{ borderLeftColor: hex(sch.color) }}>
-                  <span className="chip" style={{ background: hex(sch.color) }} />
-                  <span className="grow">#{t.id} {t.type}{hasDet(t.id) ? " ●" : ""}</span>
-                  {eye(cid.track(t.id))}
-                  {lock(cid.track(t.id))}
+        <div ref={hostRef} className="stage" />
+
+        <div className="transport">
+          <button className="play" title="play / pause (space)" disabled={videoId == null}
+                  onClick={togglePlay}>{playing ? "⏸" : "▶"}</button>
+          <span className="counter">{frame} / {(info?.n_frames ?? 1) - 1}</span>
+          <input type="range" min={0} max={Math.max(0, (info?.n_frames ?? 1) - 1)}
+                 value={frame}
+                 onChange={(e) => { setPlaying(false); setFrame(Number(e.target.value)); }} />
+          {buffering && <span className="buffering">⏳ buffering</span>}
+        </div>
+      </div>
+
+      <aside className="side">
+        <div className="object-panel">
+          {sel && selSch ? (
+            <>
+              <div className="panel-head" style={{ borderLeftColor: hex(selSch.color) }}>
+                <span className="chip" style={{ background: hex(selSch.color) }} />
+                <span className="grow">{sel.label} · {sel.type}{sel.kind === "instance" ? " ·i" : ""}</span>
+                {eye(cid.track(sel.id))}{lock(cid.track(sel.id))}
+                <button className="del" title="delete object (d)" onClick={() => void removeActive()}>🗑</button>
+              </div>
+              <div className="panel-body">
+                <div className="identity">
+                  <input className="label-input" key={sel.id} defaultValue={sel.label}
+                         title="rename label (Enter)"
+                         onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                         onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== sel.label) void doRename(v); }} />
+                  <button onClick={() => void doSplit()} title="split: new track from this frame onward">split@{frame}</button>
+                </div>
+                <div className="identity">
+                  <select value={mergeTarget ?? ""}
+                          onChange={(e) => setMergeTarget(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">merge into…</option>
+                    {tracks.filter((x) => x.id !== sel.id && x.type === sel.type)
+                      .map((x) => <option key={x.id} value={x.id}>{x.label} (#{x.id})</option>)}
+                  </select>
+                  <button disabled={mergeTarget == null}
+                          onClick={() => { if (mergeTarget != null) void doMerge(mergeTarget); }}>merge</button>
                 </div>
 
-                {isActive && (
-                  <div className="card-body">
-                    {t.type !== "ball" && (
-                      <>
-                        <div className="comp-row"><span className="grow">bbox</span>{eye(cid.bbox(t.id))}{lock(cid.bbox(t.id))}</div>
-                        <div className="comp-row"><span className="grow">mask</span>{eye(cid.mask(t.id))}{lock(cid.mask(t.id))}</div>
-                      </>
-                    )}
-
-                    <div className="actions">
-                      {t.type === "player" && <>
-                        <button disabled={!!busy} onClick={() => void runOp("detect", () => runDetect(t.id, frame))}>detect</button>
-                        <button disabled={!!busy} onClick={() => void runOp("seg", () => runSegment(t.id, frame, "rfdetr"))}>seg·rf</button>
-                        <button disabled={!!busy} onClick={() => void runOp("pose", () => runKeypoints(t.id, frame))}>pose</button>
-                      </>}
-                      {t.type !== "ball" && <>
-                        <button disabled={!!busy} onClick={() => void runOp("seg", () => runSegment(t.id, frame, "sam3"))}>seg·sam3</button>
-                        <button disabled={!!busy} onClick={doTrack}>track</button>
-                      </>}
+                {sel.type !== "ball" && (
+                  <>
+                    <div className="comp-row">
+                      <span className="grow">bbox</span>
+                      {statusPicker(draft.bboxStatus, setBboxStatus, bboxLocked(locked, sel.id))}
+                      {eye(cid.bbox(sel.id))}{lock(cid.bbox(sel.id))}
                     </div>
-                    {busy === "track" && job && (
-                      <div className="prog" title={job.detail ?? job.state}>
-                        <div style={{ width: `${Math.round((job.progress ?? 0) * 100)}%` }} />
-                      </div>
-                    )}
+                    <div className="comp-row"><span className="grow">mask</span>{eye(cid.mask(sel.id))}{lock(cid.mask(sel.id))}</div>
+                  </>
+                )}
 
-                    {t.type !== "ball" && (
-                      <>
-                        <div className="kpt-head" onClick={() => setKptsOpen((o) => !o)}>
-                          {kptsOpen ? "▾" : "▸"} keypoints ({sch.points.length})
-                        </div>
-                        {kptsOpen && (
-                          <div className="kpt-list">
-                            {sch.points.map((name, i) => (
-                              <div key={i} className={`kpt-card ${selected === i ? "sel" : ""}`}
-                                   onClick={() => setSelected(i)}>
-                                <span className="grow">{i} {name}</span>
-                                <button className="vis-badge" title="cycle visibility"
-                                        onClick={(e) => { e.stopPropagation(); cyclePointVis(i); }}>
-                                  {draft.points[i] ? VIS_CHAR[draft.points[i]!.vis] : "-"}
-                                </button>
-                                {eye(cid.kpt(t.id, i))}
-                                {lock(cid.kpt(t.id, i))}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    )}
+                <div className="actions">
+                  {sel.type === "player" && <>
+                    <button disabled={!!busy} onClick={() => void runOp("detect", () => runDetect(sel.id, frame))}>detect</button>
+                    <button disabled={!!busy} onClick={() => void runOp("seg", () => runSegment(sel.id, frame, "rfdetr"))}>seg·rf</button>
+                    <button disabled={!!busy} onClick={() => void runOp("pose", () => runKeypoints(sel.id, frame))}>pose</button>
+                  </>}
+                  {sel.type !== "ball" && <>
+                    <button disabled={!!busy} onClick={() => void runOp("seg", () => runSegment(sel.id, frame, "sam3"))}>seg·sam3</button>
+                    <button disabled={!!busy} onClick={doTrack}>track</button>
+                  </>}
+                </div>
+                {busy === "track" && job && (
+                  <div className="prog" title={job.detail ?? job.state}>
+                    <div style={{ width: `${Math.round((job.progress ?? 0) * 100)}%` }} />
                   </div>
                 )}
+
+                {sel.type !== "ball" && (
+                  <>
+                    <div className="kpt-head" onClick={() => setKptsOpen((o) => !o)}>
+                      {kptsOpen ? "▾" : "▸"} keypoints ({selSch.points.length})
+                    </div>
+                    {kptsOpen && (
+                      <div className="kpt-list">
+                        {selSch.points.map((name, i) => (
+                          <div key={i} className={`kpt-card ${selected === i ? "sel" : ""}`}
+                               onClick={() => setSelected(i)}>
+                            <span className="grow">{i} {name}</span>
+                            {statusPicker(draft.points[i]?.status ?? "VISIBLE",
+                              (st) => setPointStatus(i, st), kptLocked(locked, sel.id, i))}
+                            {eye(cid.kpt(sel.id, i))}{lock(cid.kpt(sel.id, i))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
-            );
-          })}
+            </>
+          ) : (
+            <div className="empty">no object selected — click one below or press <b>n</b></div>
+          )}
         </div>
 
-        <h2>keys</h2>
-        <pre>
-{`←/→  step ±1   (shift ±10)
-n    new track (of new-type)
-b    draw bbox for active track
-1-4  set new-type
-Tab  cycle active track
-wheel  zoom to cursor
-drag   pan (empty) / move point
-v    cycle point visibility
-Bksp undo last point
-d    delete active track
-Esc  deselect`}
-        </pre>
+        <div className="object-list">
+          {tracks.map((t) => (
+            <div key={t.id} className={`obj-row ${t.id === activeId ? "on" : ""}`}
+                 onClick={() => setActiveId(t.id)}
+                 style={{ borderLeftColor: hex(LABEL_SCHEMAS[t.type].color) }}>
+              <span className="chip" style={{ background: hex(LABEL_SCHEMAS[t.type].color) }} />
+              <span className="grow">{t.label} · {t.type}{t.kind === "instance" ? " ·i" : ""}{hasDet(t.id) ? " ●" : ""}</span>
+              {eye(cid.track(t.id))}{lock(cid.track(t.id))}
+            </div>
+          ))}
+          {!tracks.length && <div className="empty">no objects yet</div>}
+        </div>
+
+        <details className="keys">
+          <summary>keys</summary>
+          <pre>{`←/→ step ±1 (shift ±10) · n new · b bbox · 1-4 type · Tab cycle
+wheel zoom · drag pan/move · v status (V/O/I) · Bksp undo · d del · Esc`}</pre>
+        </details>
       </aside>
     </div>
   );

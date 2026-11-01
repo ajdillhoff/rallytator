@@ -31,11 +31,28 @@ annotation. Frame delivery is server-authoritative (see
 [ADR-0002](docs/adr/0002-server-side-frame-delivery.md)); the browser never guesses which
 Frame it has.
 
+## Object
+
+The general annotated subject. Every Object is realized as a **Track** row carrying a
+**kind**: a **track** (persistent multi-frame identity — the common case, and what the
+video dataset is built from) or an **instance** (a single-Frame annotation, for
+image-dataset work). Both share all Detection/keypoint/mask/status machinery; kind only
+changes whether the Object is expected to persist across Frames. See
+[ADR-0007](docs/adr/0007-object-taxonomy-and-status.md).
+
 ## Track
 
 A **persistent subject identity within a single Video** — the identity spine. "Player A"
 in Frame 10 and Frame 500 are the same Track. A Track owns an ordered set of
-**Detections**, one per annotated Frame. Track types:
+**Detections**, one per annotated Frame.
+
+A Track's user-facing identity is its **label** — unique within a Video and **editable** —
+over an immutable internal id. Labels survive the identity-repair operations: **split**
+(one Track becomes two at a Frame boundary — tracker drift, crossing subjects) and
+**merge** (two Tracks that are one Object are joined). See
+[ADR-0007](docs/adr/0007-object-taxonomy-and-status.md).
+
+Track types:
 
 - **Player** — a person on court (Pose). As many Player Tracks as there are players
   (2 singles, 4 doubles); the tool does not hardcode a count.
@@ -73,12 +90,25 @@ bounces twice without being hit). A Ball Track may contain several Flights (hit 
 hit again); a Flight is the natural unit for the downstream (TrackNetV4) ball export. See
 [`docs/data-model.md`](docs/data-model.md).
 
-## Visibility
+## Status
 
-The observability of a Detection's subject on a Frame: **visible** (has geometry),
-**occluded** (briefly hidden but still present — e.g. a Ballistic ball behind a player;
-position optional/estimated), or **out-of-frame**. Distinguishes genuine absence from
-"not yet annotated" (which is the *absence of a Detection*).
+The observability + trainability of an Object's geometry on a Frame, one of four canonical
+tokens (exact uppercase — a downstream contract), set on the **bbox** and on **each
+keypoint** independently:
+
+- **VISIBLE** — present and confidently located.
+- **OCCLUDED** — hidden, but a best-guess location is committed and **supervised**.
+- **IGNORE** — in-frame and occluded, but the location is **not confidently known**;
+  excluded from training/eval loss (the don't-care). The reason occlusion is worth
+  annotating at all.
+- **OUT_OF_FRAME** — outside the image; no reliable geometry, so it is **hidden** on the
+  canvas.
+
+A bbox of `OUT_OF_FRAME` (box + markers hidden, a geometry-less Detection kept) or `IGNORE`
+(whole Object don't-care) overrides its keypoints. Status distinguishes genuine absence
+from "not yet annotated" (the *absence of a Detection*). It is the exported, training-facing
+label — distinct from the editor-only display show/hide and lock aids. Replaces the former
+3-value Visibility; see [ADR-0007](docs/adr/0007-object-taxonomy-and-status.md).
 
 ## Task
 

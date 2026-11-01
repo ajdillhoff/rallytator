@@ -23,6 +23,8 @@ Track(
   id            INTEGER PRIMARY KEY,
   video_id      INTEGER NOT NULL REFERENCES Video(id),
   type          TEXT NOT NULL,        -- 'player' | 'racquet' | 'ball' | 'court'
+  kind          TEXT NOT NULL,        -- 'instance' (single Frame) | 'track' (ADR-0007)
+  label         TEXT NOT NULL,        -- editable, user-facing id; UNIQUE(video_id, label)
   annotator     TEXT                  -- nullable; provenance for a future multi-user world
 );
 
@@ -49,9 +51,14 @@ Mask(
 
 ### `geom` JSON
 
-- **Pose** (player/racquet/court): `{ "kpts": [[x,y,vis], ...] }` in schema order
-  (see [`label-schemas.md`](label-schemas.md)); `vis` ∈ `visible|occluded|out-of-frame`.
-- **Point** (ball): `{ "pt": [x,y], "vis": "visible" }`.
+`status` ∈ `VISIBLE | OCCLUDED | IGNORE | OUT_OF_FRAME` (ADR-0007; exact tokens are a
+downstream contract).
+
+- **Pose** (player/racquet/court): `{ "bbox": [x,y,w,h], "bbox_status": "VISIBLE",
+  "kpts": [[x,y,status], ...] }` in schema order (see [`label-schemas.md`](label-schemas.md)).
+  `bbox`/`bbox_status` are optional (absent before a box is drawn); a bbox `OUT_OF_FRAME`
+  Detection may carry no keypoints (a geometry-less absence marker).
+- **Point** (ball): `{ "pt": [x,y], "status": "VISIBLE" }`.
 
 ### Flight (Ball only)
 

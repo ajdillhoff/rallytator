@@ -5,7 +5,7 @@
 // bbox coords are video pixels; markers are drawn at a constant *screen* size.
 
 import { Application, Container, type FederatedPointerEvent, Graphics, Sprite, Texture } from "pixi.js";
-import type { Bbox, EditPoint } from "./types";
+import type { Bbox, EditPoint, Status } from "./types";
 
 export interface RenderItem {
   points: EditPoint[];
@@ -14,7 +14,10 @@ export interface RenderItem {
   color: number;
   active: boolean;
   bbox?: Bbox | null;         // drawn (with resize handles when active) if present
+  bboxStatus?: Status;        // styles the box (IGNORE = amber, OCCLUDED = dim)
 }
+
+const IGNORE_COLOR = 0xffc107;  // amber — the flagged / excluded-from-loss style
 
 export interface MaskItem {
   id: number;                 // detection id (texture cache key)
@@ -37,7 +40,9 @@ export interface PointerInfo {
 
 type PointerCb = (p: PointerInfo) => void;
 
-const VIS_ALPHA = { visible: 1, occluded: 0.45, "out-of-frame": 0.2 } as const;
+// Per-status marker alpha. OUT_OF_FRAME is hidden entirely (handled in draw()); IGNORE is
+// dimmed here and gets a distinct flagged style in Phase C.
+const STATUS_ALPHA = { VISIBLE: 1, OCCLUDED: 0.45, IGNORE: 0.45, OUT_OF_FRAME: 0 } as const;
 const HIT_RADIUS_SCREEN = 10;
 const HANDLE_RADIUS_SCREEN = 7;
 const MIN_SCALE = 0.05;
@@ -229,15 +234,22 @@ export class PixiStage {
 
     for (const item of items) {
       const vis = item.pointVisible;
-      const shown = (i: number) => vis === undefined || vis[i] !== false;
+      // A keypoint renders unless display-hidden (👁) or semantically OUT_OF_FRAME.
+      const shown = (i: number) =>
+        (vis === undefined || vis[i] !== false) && item.points[i]?.status !== "OUT_OF_FRAME";
 
       // bounding box
       if (item.bbox) {
         const [x, y, w, h] = item.bbox;
+        const st = item.bboxStatus ?? "VISIBLE";
+        const boxColor = st === "IGNORE" ? IGNORE_COLOR : item.color;
+        const boxAlpha = st === "OCCLUDED"
+          ? (item.active ? 0.5 : 0.25)
+          : (item.active ? 0.9 : 0.4);
         g.rect(x, y, w, h).stroke({
           width: (item.active ? 1.5 : 1) / this.scale,
-          color: item.color,
-          alpha: item.active ? 0.9 : 0.4,
+          color: boxColor,
+          alpha: boxAlpha,
         });
         if (item.active) {
           const rh = HANDLE_RADIUS_SCREEN / this.scale;
@@ -270,7 +282,11 @@ export class PixiStage {
         const isSel = item.active && i === selected;
         const rr = isSel ? r + 1.5 / this.scale : r;
         g.circle(p.x, p.y, rr);
-        g.fill({ color: isSel ? 0xffffff : item.color, alpha: VIS_ALPHA[p.vis] });
+        if (p.status === "IGNORE") {
+          g.stroke({ width: 2 / this.scale, color: IGNORE_COLOR });  // hollow ring = flagged
+        } else {
+          g.fill({ color: isSel ? 0xffffff : item.color, alpha: STATUS_ALPHA[p.status] });
+        }
         if (isSel) g.circle(p.x, p.y, rr).stroke({ width: 1.5 / this.scale, color: item.color });
       });
     }

@@ -66,13 +66,13 @@ export function applyTemplate(type: TrackType, bbox: Bbox): EditPoint[] {
   const [bx, by, bw, bh] = bbox;
   const tmpl = TEMPLATES[type];
   if (tmpl) {
-    return tmpl.map(([nx, ny]) => ({ x: bx + nx * bw, y: by + ny * bh, vis: "visible" }));
+    return tmpl.map(([nx, ny]) => ({ x: bx + nx * bw, y: by + ny * bh, status: "VISIBLE" }));
   }
   // Fallback: no template for this type — spread points evenly down the box center.
   const n = LABEL_SCHEMAS[type].points.length;
   return Array.from({ length: n }, (_, i) => ({
     x: bx + bw / 2,
     y: by + (bh * (i + 0.5)) / n,
-    vis: "visible" as const,
+    status: "VISIBLE" as const,
   }));
 }
