@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  createTrack, deleteTrack, fetchMaskBitmap, getVideoInfo,
+  createTrack, deleteTrack, exportVideo, fetchMaskBitmap, getVideoInfo,
   getFrameDetections, listTracks, upsertDetection,
   renameTrack, splitTrack, mergeTracks,
   runDetect, runSegment, runKeypoints, startTrack, watchJob, type JobStatus,
@@ -74,6 +74,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [exportPath, setExportPath] = useState<string | null>(null);
 
   // Latest state for the stable imperative Pixi pointer callbacks.
   const s = useRef({ activeId, draft, frame, tracks, newType, newKind, mode, locked });
@@ -556,6 +557,18 @@ export default function App() {
     </span>
   );
 
+  const doExport = async () => {
+    if (videoId == null) return;
+    setExportPath(null);
+    setErr(null);
+    try {
+      const { path } = await exportVideo(videoId);
+      setExportPath(path);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const sel = activeTrack;
   const selSch = sel ? LABEL_SCHEMAS[sel.type] : null;
 
@@ -564,7 +577,9 @@ export default function App() {
       <header>
         RallyTator · {info ? `${info.width}×${info.height} · ${info.fps.toFixed(0)}fps · ${info.n_frames}f` : "no video"}
         {mode === "draw-bbox" && <span className="mode"> · draw bbox</span>}
+        {exportPath && <span className="mode"> · exported: {exportPath}</span>}
         {err && <span className="err"> · {err}</span>}
+        <button disabled={videoId == null} onClick={() => void doExport()} style={{ marginLeft: "auto" }}>export</button>
       </header>
 
       <div className="main">

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -414,6 +415,47 @@ async def job_progress(ws: WebSocket, job_id: str) -> None:
         pass
     finally:
         jobs().unsubscribe(job_id, q)
+
+
+@app.post("/videos/{video_id}/export")
+def export_video(video_id: int) -> dict:
+    """Write all tracks + per-frame detections to <video_stem>.json alongside the video."""
+    v = store().get_video(video_id)
+    if v is None:
+        raise HTTPException(404, f"no video {video_id}")
+    tracks = store().list_tracks(video_id)
+    out_tracks = []
+    for t in tracks:
+        dets = store().track_detections(t["id"])
+        detections_by_frame = {
+            str(d["frame"]): {
+                "geom": d["geom"],
+                "source": d["source"],
+                "edited": d["edited"],
+            }
+            for d in dets
+        }
+        out_tracks.append({
+            "id": t["id"],
+            "type": t["type"],
+            "kind": t["kind"],
+            "label": t["label"],
+            "detections": detections_by_frame,
+        })
+    export = {
+        "version": "1",
+        "video": {
+            "path": v["path"],
+            "width": v["width"],
+            "height": v["height"],
+            "fps": v["fps"],
+            "n_frames": v["n_frames"],
+        },
+        "tracks": out_tracks,
+    }
+    out_path = Path(v["path"]).with_suffix(".json")
+    out_path.write_text(json.dumps(export, indent=2))
+    return {"path": str(out_path)}
 
 
 @app.get("/")

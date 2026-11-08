@@ -30,12 +30,31 @@ const RACQUET_EDGES: [number, number][] = [
   [0, 1], [1, 2], [2, 3], [2, 4], [3, 4],
 ];
 
-// Court 20-point: 17 ground + 3 net (left post, center-top, right post).
-// TODO: exact ground-point ids depend on importing the existing setup
-// (docs/label-schemas.md). Named generically until then; no line topology yet.
+// Court 20-point: 17 ground-plane (CourtKeypoint enum) + 3 net-top (NetTop enum).
+// Order is canonical — matches rallylens/core/geometry.py IDs 0-19.
 const COURT_POINTS = [
-  ...Array.from({ length: 17 }, (_, i) => `ground_${i}`),
-  "net_left", "net_center_top", "net_right",
+  // Ground plane (IDs 0-16, CourtKeypoint)
+  "far_left_doubles",    // 0  (−5.485, +11.885, 0)
+  "far_left_singles",    // 1  (−4.115, +11.885, 0)
+  "far_right_singles",   // 2  (+4.115, +11.885, 0)
+  "far_right_doubles",   // 3  (+5.485, +11.885, 0)
+  "far_left_service",    // 4  (−4.115,  +6.400, 0)
+  "far_service_t",       // 5  (  0.000,  +6.400, 0)
+  "far_right_service",   // 6  (+4.115,  +6.400, 0)
+  "net_left_post",       // 7  (−5.485,   0.000, 0)
+  "net_right_post",      // 8  (+5.485,   0.000, 0)
+  "near_left_service",   // 9  (−4.115,  −6.400, 0)
+  "near_service_t",      // 10 (  0.000,  −6.400, 0)
+  "near_right_service",  // 11 (+4.115,  −6.400, 0)
+  "near_left_doubles",   // 12 (−5.485, −11.885, 0)
+  "near_left_singles",   // 13 (−4.115, −11.885, 0)
+  "near_right_singles",  // 14 (+4.115, −11.885, 0)
+  "near_right_doubles",  // 15 (+5.485, −11.885, 0)
+  "net_center_base",     // 16 (  0.000,   0.000, 0)
+  // Off-plane net tops (IDs 17-19, NetTop)
+  "net_left_post_top",      // 17 (−5.485, 0, +1.07)
+  "net_right_post_top",     // 18 (+5.485, 0, +1.07)
+  "net_center_strap_top",   // 19 (  0.000, 0, +0.914)
 ];
 
 export const LABEL_SCHEMAS: Record<TrackType, LabelSchema> = {

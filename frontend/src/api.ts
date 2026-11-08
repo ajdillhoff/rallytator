@@ -91,6 +91,12 @@ export const runSegment = (trackId: number, frame: number, model: SegModel) =>
 export const runKeypoints = (trackId: number, frame: number) =>
   post<Detection>(`/tracks/${trackId}/keypoints?frame=${frame}`);
 
+export interface ExportResult { path: string; }
+
+/** Write all tracks + per-frame detections to <video_stem>.json alongside the video. */
+export const exportVideo = (videoId: number) =>
+  fetch(`/videos/${videoId}/export`, { method: "POST" }).then(json<ExportResult>);
+
 export interface JobRef { job_id: string; }
 export interface JobStatus {
   job_id: string;

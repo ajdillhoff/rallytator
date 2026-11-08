@@ -18,20 +18,42 @@ heights. The off-plane points make calibration **full 3D**, not just a planar ho
 
 ### Ground plane (17)
 
-> **TODO: import the exact 17-point definition from the existing setup.** Do not invent
-> these — they must match the annotator's established convention and the downstream
-> calibration's expected ordering/ids. The standard tennis-CV 14-point set (4 doubles
-> corners, 4 singles corners, 4 service-line×singles-sideline, 2 T's) is a *subset*; the
-> remaining 3 (likely baseline center marks and/or net-line×sideline points) come from
-> the existing setup.
+Canonical definition is `CourtKeypoint` in `rallylens/core/geometry.py`. World frame:
+origin at net-line center, +x right doubles sideline, +y far baseline, +z up. Units: metres.
+
+| id | name | x (m) | y (m) |
+|----|------|-------|-------|
+| 0 | far_left_doubles | −5.485 | +11.885 |
+| 1 | far_left_singles | −4.115 | +11.885 |
+| 2 | far_right_singles | +4.115 | +11.885 |
+| 3 | far_right_doubles | +5.485 | +11.885 |
+| 4 | far_left_service | −4.115 | +6.400 |
+| 5 | far_service_t | 0.000 | +6.400 |
+| 6 | far_right_service | +4.115 | +6.400 |
+| 7 | net_left_post | −5.485 | 0.000 |
+| 8 | net_right_post | +5.485 | 0.000 |
+| 9 | near_left_service | −4.115 | −6.400 |
+| 10 | near_service_t | 0.000 | −6.400 |
+| 11 | near_right_service | +4.115 | −6.400 |
+| 12 | near_left_doubles | −5.485 | −11.885 |
+| 13 | near_left_singles | −4.115 | −11.885 |
+| 14 | near_right_singles | +4.115 | −11.885 |
+| 15 | near_right_doubles | +5.485 | −11.885 |
+| 16 | net_center_base | 0.000 | 0.000 |
+
+IDs 7/8 are the **ground-level bases** of the net posts (z=0). IDs 0–6 and 9–15 are
+the standard 14 line intersections. ID 16 is the center-strap base, needed for the P
+(full projection) solve together with net-top ID 19.
 
 ### Net (3) — off ground plane, known heights
 
-| id | point | height |
-|----|-------|--------|
-| net_post_left  | left net-post top | standard post height |
-| net_post_right | right net-post top | standard post height |
-| net_center_top | top of net at center strap | standard center-net height |
+Canonical definition is `NetTop` in `rallylens/core/geometry.py`.
+
+| id | name | x (m) | z (m) |
+|----|------|-------|-------|
+| 17 | net_left_post_top | −5.485 | +1.070 |
+| 18 | net_right_post_top | +5.485 | +1.070 |
+| 19 | net_center_strap_top | 0.000 | +0.914 |
 
 Known heights + ground points → solve camera pose/height → metric ball height, true net
 clearance, 3D-accurate metrics.

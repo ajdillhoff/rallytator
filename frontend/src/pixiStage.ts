@@ -40,9 +40,8 @@ export interface PointerInfo {
 
 type PointerCb = (p: PointerInfo) => void;
 
-// Per-status marker alpha. OUT_OF_FRAME is hidden entirely (handled in draw()); IGNORE is
-// dimmed here and gets a distinct flagged style in Phase C.
-const STATUS_ALPHA = { VISIBLE: 1, OCCLUDED: 0.45, IGNORE: 0.45, OUT_OF_FRAME: 0 } as const;
+// Keypoints are drawn by *shape* per status (always full opacity, except OUT_OF_FRAME which
+// is hidden): VISIBLE = filled dot, OCCLUDED = open ring, IGNORE = cross.
 const HIT_RADIUS_SCREEN = 10;
 const HANDLE_RADIUS_SCREEN = 7;
 const MIN_SCALE = 0.05;
@@ -275,19 +274,24 @@ export class PixiStage {
         alpha: item.active ? 0.9 : 0.5,
       });
 
-      // keypoints (constant screen size)
-      const r = (item.active ? 3 : 2) / this.scale;
+      // keypoints (constant screen size); shape encodes status
+      const r = (item.active ? 6 : 4) / this.scale;
+      const sw = (item.active ? 2.5 : 2) / this.scale;
       item.points.forEach((p, i) => {
         if (!shown(i)) return;
         const isSel = item.active && i === selected;
+        const col = isSel ? 0xffffff : item.color;
         const rr = isSel ? r + 1.5 / this.scale : r;
-        g.circle(p.x, p.y, rr);
         if (p.status === "IGNORE") {
-          g.stroke({ width: 2 / this.scale, color: IGNORE_COLOR });  // hollow ring = flagged
+          g.moveTo(p.x - rr, p.y - rr).lineTo(p.x + rr, p.y + rr)
+           .moveTo(p.x - rr, p.y + rr).lineTo(p.x + rr, p.y - rr)
+           .stroke({ width: sw, color: col });                       // cross
+        } else if (p.status === "OCCLUDED") {
+          g.circle(p.x, p.y, rr).stroke({ width: sw, color: col });  // open ring
         } else {
-          g.fill({ color: isSel ? 0xffffff : item.color, alpha: STATUS_ALPHA[p.status] });
+          g.circle(p.x, p.y, rr).fill({ color: col });               // filled dot (VISIBLE)
         }
-        if (isSel) g.circle(p.x, p.y, rr).stroke({ width: 1.5 / this.scale, color: item.color });
+        if (isSel) g.circle(p.x, p.y, rr + 1 / this.scale).stroke({ width: 1 / this.scale, color: item.color });
       });
     }
   }
